@@ -35,11 +35,6 @@ contract Collection is Ownable{
         uint royaltyBalance;
     }
 
-    // struct delistTokens{
-    //     address _contract;
-    //     uint[] tokenIds;
-    // }
-
     uint public FEE = 200; //2% since we divide by 10_000
     uint public FEEBalance;
     uint public differentialAmount = 10 ether;
@@ -52,6 +47,9 @@ contract Collection is Ownable{
 
     mapping(address=>mapping(uint=>directListing)) public directSales;
     mapping(address=>mapping(uint=>auctionListing)) public auctionSales;
+
+    mapping(address=>uint[]) contractListed; //contract address > listed tokens
+    mapping(address=>mapping(uint=>uint)) listingPosition;
 
     event tokenListed(address indexed _contract,address indexed owner,uint indexed tokenId,uint8 listingType,uint price,uint duration);
     event tokenBought(address indexed _contract,address indexed buyer,uint indexed tokenId);
@@ -72,6 +70,8 @@ contract Collection is Ownable{
         NFT.transferFrom(msg.sender, address(this), tokenId);
         listed[_contract][tokenId] = 1;
         directSales[_contract][tokenId] = directListing(msg.sender,price);
+        contractListed[_contract].push(tokenId);
+        listingPosition[_contract][tokenId] = contractListed[_contract].length - 1;
         emit tokenListed(_contract,msg.sender, tokenId,1,price,0);
     }
 
@@ -85,6 +85,8 @@ contract Collection is Ownable{
         NFT.transferFrom(msg.sender,address(this),tokenId);
         listed[_contract][tokenId] = 2;
         auctionSales[_contract][tokenId] = auctionListing(msg.sender,duration,0,price,address(0));
+        contractListed[_contract].push(tokenId);
+        listingPosition[_contract][tokenId] = contractListed[_contract].length - 1;
         emit tokenListed(_contract,msg.sender, tokenId,2,price,duration);
     }
 
@@ -101,8 +103,10 @@ contract Collection is Ownable{
         FEEBalance += fee;
         royaltyInfo[_contract].royaltyBalance += royalty;
         NFT.transferFrom(address(this),msg.sender,tokenId);
+        popToken(_contract, tokenId);
         delete directSales[_contract][tokenId];
         delete listed[_contract][tokenId];
+        delete listingPosition[_contract][tokenId];
         emit tokenBought(_contract,msg.sender,tokenId);
     }
 
@@ -140,8 +144,10 @@ contract Collection is Ownable{
         royaltyInfo[_contract].royaltyBalance += royalty;
         NFT.transferFrom(address(this),listing.highestBidder,tokenId);
         emit tokenBought(_contract,listing.highestBidder,tokenId);
+        popToken(_contract, tokenId);
         delete auctionSales[_contract][tokenId];
         delete listed[_contract][tokenId];
+        delete listingPosition[_contract][tokenId];
     }
 
     function delistToken(address[] calldata _contract,uint[] calldata tokenId) external{
@@ -149,6 +155,8 @@ contract Collection is Ownable{
         for(uint i=0;i<length;i++){
             require(listed[_contract[i]][tokenId[i]] != 0,"Token not listed");
             IERC721 NFT = IERC721(_contract[i]);
+            popToken(_contract[i], tokenId[i]);
+            delete listingPosition[_contract[i]][tokenId[i]];
             if(listed[_contract[i]][tokenId[i]] == 1){
                 require(directSales[_contract[i]][tokenId[i]].owner == msg.sender,"Not owner");
                 NFT.transferFrom(address(this),msg.sender,tokenId[i]);
@@ -170,8 +178,20 @@ contract Collection is Ownable{
         }
     }
 
+    function popToken(address _contract,uint _token) private{
+        uint lastToken = contractListed[_contract][contractListed[_contract].length - 1];
+        uint currPosition = listingPosition[_contract][_token];
+        contractListed[_contract][currPosition] = lastToken;
+        listingPosition[_contract][_token] = currPosition;
+        contractListed[_contract].pop();
+    }
+
     function whitelistContract(address _contract,bool _whitelist) external onlyOwner{
         whitelistContracts[_contract] = _whitelist;
+    }
+
+    function getContractListed(address _contract) external view returns(uint[] memory){
+        return contractListed[_contract];
     }
 
     function retrieveFee(address _to) external {
